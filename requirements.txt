@@ -1,0 +1,8 @@
+numpy
+scipy
+pandas
+matplotlib
+torch
+nflows
+tqdm
+scikit-learn

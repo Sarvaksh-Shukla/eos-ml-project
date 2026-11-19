@@ -1,0 +1,84 @@
+
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "# eos-ml — Quickstart (interactive)\n\nThis notebook walks through the `eos-ml` pipeline end-to-end on synthetic data and provides lightweight interactive widgets (via `ipywidgets`) to explore posterior samples, M–R curves, and point estimates.\n\n**Prerequisites:** install dependencies from `requirements.txt` and `ipywidgets`. Run the notebook from the `eos-ml/notebooks/` directory so imports from the parent directory work (the notebook will add the parent folder to `sys.path`)."
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# If you haven't installed requirements, uncomment and run the next line (one-time)\n# !pip install -r ../requirements.txt ipywidgets"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "import os, sys\n# make sure parent project folder is on sys.path (notebook placed in notebooks/ )\nsys.path.insert(0, os.path.abspath('..'))\nprint('Project root added to sys.path:', sys.path[0])"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "import numpy as np\nimport matplotlib.pyplot as plt\nfrom IPython.display import display, Markdown\nimport ipywidgets as widgets\nplt.rcParams['figure.figsize'] = (6,4)\n\n# core pipeline imports (from parent folder)\nfrom inference.dataset import synth_dataset\nfrom inference.sampler import make_eos\nfrom inference.supervised_baseline import train_inverse_regressor, predict_inverse\nfrom inference.sbi_flows import train_flow, flow_sample_posterior\nfrom physics.forward_model import ForwardModel\nfrom verify.plots import plot_mr_curve\n\nprint('Imports OK')"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# Generate a small synthetic dataset for interactive demo (fast)\nX, TH = synth_dataset(N=60, seed=2)\nprint('Generated dataset shapes — X, TH:', X.shape, TH.shape)\ndisplay(Markdown('**First 5 observables (M [M_sun], R [km], Lambda):**'))\nprint(X[:5])"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# Train a fast inverse regressor (MLP) — fewer epochs for demo speed\nprint('Training inverse regressor (demo: epochs=60) ...')\ninv = train_inverse_regressor(X, TH, epochs=60, verbose=True)\ndisplay(Markdown('Trained inverse regressor (object `inv`)'))"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# Train a conditional flow (SBI) — reduced epochs for demo\nprint('Training conditional flow (demo: epochs=80) ...')\nflow = train_flow(TH, X, epochs=80, verbose=True)\ndisplay(Markdown('Trained conditional flow (object `flow`)'))"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# Interactive view function: shows point estimate, true EoS, and posterior samples' M-R curves + simple param histogram\n\ndef interactive_view(idx=0, n_post=100, n_mr_samples=30):\n    theta_keys = [\"rho1\",\"rho2\",\"Gamma1\",\"Gamma2\",\"Gamma3\",\"P1\"]\n    x_obs = X[idx]\n    display(Markdown(f'**Selected observation index:** {idx} — x_obs = {x_obs}'))\n\n    # point estimate (inverse regressor)\n    th_map = predict_inverse(inv, x_obs.reshape(1, -1))[0]\n    th_est = {k: float(v) for k, v in zip(theta_keys, th_map)}\n    eos_est = make_eos(th_est)\n    fm_est = ForwardModel(eos_est)\n\n    # ground-truth EoS used to generate the synthetic obs\n    th_true = {k: float(v) for k, v in zip(theta_keys, TH[idx])}\n    eos_true = make_eos(th_true)\n    fm_true = ForwardModel(eos_true)\n\n    # plotting\n    fig, axes = plt.subplots(1, 2, figsize=(12, 4))\n    rho_scan = np.geomspace(6e13, 3e15, 40)\n\n    # M-R curves: true, estimate\n    plot_mr_curve(fm_true, rho_scan, ax=axes[0], label='true')\n    plot_mr_curve(fm_est, rho_scan, ax=axes[0], label='estimate')\n\n    # posterior samples from flow (theta space), plot subset of MR curves\n    S = flow_sample_posterior(flow, x_obs, n_samples=n_post)\n    n_plot = min(n_mr_samples, S.shape[0])\n    for s in S[:n_plot]:\n        try:\n            th_s = {k: float(v) for k, v in zip(theta_keys, s)}\n            eos_s = make_eos(th_s)\n            fm_s = ForwardModel(eos_s)\n            Ms, Rs = [], []\n            for rc in rho_scan:\n                M, R = fm_s.tov.integrate_star(rc)\n                Ms.append(M/1.98847e33)  # Msun\n                Rs.append(R/1e5)         # km\n            axes[0].plot(Rs, Ms, color='gray', alpha=0.25, lw=0.8)\n        except Exception:\n            continue\n\n    axes[0].set_title('M–R: true vs estimate + posterior samples')\n    axes[0].legend()\n\n    # histogram of one posterior parameter (Gamma2)\n    gamma2_vals = S[:, 3]\n    axes[1].hist(gamma2_vals, bins=25, alpha=0.8)\n    axes[1].axvline(th_true['Gamma2'], color='C1', label='true Gamma2')\n    axes[1].axvline(th_est['Gamma2'], color='C2', label='map est')\n    axes[1].set_xlabel('Gamma2')\n    axes[1].legend()\n    plt.show()"
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "# Interactive widgets: index slider, posterior sample size, and how many MR curves to overlay\nwidgets.interact(\n    interactive_view,\n    idx=widgets.IntSlider(min=0, max=len(X)-1, step=1, value=0),\n    n_post=widgets.IntSlider(min=20, max=500, step=10, value=100),\n    n_mr_samples=widgets.IntSlider(min=0, max=100, step=1, value=30)\n)"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Next steps and notes\n- This notebook is a compact interactive demo: for production-quality runs increase dataset size and training epochs (and use GPU).\n- To use **real NICER / GW** data: place CSVs in `../data/` and add a loader cell (I can add that for you).\n- If ipywidgets don't appear, enable the extension (`jupyter nbextension enable --py widgetsnbextension`) or use JupyterLab extension for widgets.\n\nTell me if you want: (A) a cell that loads NICER/GW CSVs and builds the likelihood, (B) a version that uses a crust model + validated Love-number integrator, or (C) export cells to a downloadable `.ipynb` file placed in the repo."
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.x"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
