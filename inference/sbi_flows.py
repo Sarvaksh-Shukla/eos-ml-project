@@ -1,3 +1,4 @@
+import numpy as np
 import torch as t
 from torch.utils.data import TensorDataset, DataLoader
 from nflows.flows import Flow
