@@ -10,7 +10,7 @@ from verify.plots import plot_mr_curve
 
 if __name__ == "__main__":
     print("Simulating dataset...")
-    X, TH = synth_dataset(N=30, seed=42)
+    X, TH = synth_dataset(N=10, seed=42)
     
     print("Simulated:", X.shape, TH.shape)
     # quick train/val split (we only train on entire set for demo)
@@ -18,11 +18,11 @@ if __name__ == "__main__":
 
     # Train inverse regressor
     print("Training inverse regressor...")
-    inv = train_inverse_regressor(X_train, TH_train, epochs=150, verbose=True)
+    inv = train_inverse_regressor(X_train, TH_train, epochs=50, verbose=True)
 
     # Train conditional flow
     print("Training conditional flow (SBI)...")
-    flow = train_flow(TH_train, X_train, epochs=150)
+    flow = train_flow(TH_train, X_train, epochs=50)
 
     # Pick a synthetic observation
     x_obs = X_val[0]

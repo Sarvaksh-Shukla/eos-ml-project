@@ -28,8 +28,17 @@ class ConditionalMAF:
 
 def train_flow(thetas, xs, epochs=300, bs=256, lr=1e-3, device=None, verbose=True):
     device = device or ("cuda" if t.cuda.is_available() else "cpu")
-    thetas = np.nan_to_num(np.asarray(thetas, dtype=np.float32), nan=0.0, posinf=1e5, neginf=-1e5)
-    xs = np.nan_to_num(np.asarray(xs, dtype=np.float32), nan=0.0, posinf=1e5, neginf=-1e5)
+    thetas = np.asarray(thetas, dtype=np.float64)
+    xs = np.asarray(xs, dtype=np.float64)
+    if (
+        thetas.ndim != 2
+        or xs.ndim != 2
+        or thetas.shape[0] != xs.shape[0]
+        or not thetas.shape[0]
+    ):
+        raise ValueError("Theta and observation arrays must be non-empty 2-D arrays")
+    if not np.all(np.isfinite(thetas)) or not np.all(np.isfinite(xs)):
+        raise ValueError("Training arrays must contain only finite values")
     th_mean = thetas.mean(axis=0)
     th_std = thetas.std(axis=0)
     th_std[th_std < 1e-8] = 1.0
@@ -61,18 +70,27 @@ def train_flow(thetas, xs, epochs=300, bs=256, lr=1e-3, device=None, verbose=Tru
 
 def flow_sample_posterior(flow_model, x_obs, n_samples=500):
     import torch as T
-    x_obs = np.nan_to_num(np.asarray(x_obs, dtype=np.float32), nan=0.0, posinf=1e5, neginf=-1e5)
+    x_obs = np.asarray(x_obs, dtype=np.float64)
+    if (
+        x_obs.ndim not in (1, 2)
+        or (x_obs.ndim == 2 and x_obs.shape[0] != 1)
+        or not np.all(np.isfinite(x_obs))
+    ):
+        raise ValueError("x_obs must be one finite observation vector")
+    if not isinstance(n_samples, int) or n_samples < 1:
+        raise ValueError("n_samples must be a positive integer")
     xn = (x_obs - flow_model.x_mean) / flow_model.x_std
     x = T.tensor(xn, dtype=T.float32)
     if x.ndim == 1:
         x = x.unsqueeze(0)
     with T.no_grad():
         samples = flow_model.sample(n_samples, x.to(flow_model.device))
-    samples = samples.cpu().numpy().reshape(n_samples, -1)
+    samples = samples.cpu().numpy().reshape(-1, flow_model.th_mean.shape[0])
     samples = samples * flow_model.th_std + flow_model.th_mean
-    samples[:, 0] = np.clip(samples[:, 0], 5e13, 2e14)
-    samples[:, 1] = np.clip(samples[:, 1], 3e14, 1e15)
-    samples[:, 1] = np.maximum(samples[:, 1], samples[:, 0] * 1.5)
-    samples[:, 2:5] = np.clip(samples[:, 2:5], 1.2, 3.5)
-    samples[:, 5] = np.clip(samples[:, 5], 1e33, 1e36)
+    samples[:, 0] = np.clip(samples[:, 0], 1.2e14, 1.8e14)
+    samples[:, 1] = np.clip(samples[:, 1], 4.5e14, 6e14)
+    samples[:, 2] = np.clip(samples[:, 2], 1.3, 1.6)
+    samples[:, 3] = np.clip(samples[:, 3], 1.8, 2.4)
+    samples[:, 4] = np.clip(samples[:, 4], 2.8, 3.1)
+    samples[:, 5] = np.clip(samples[:, 5], 2e33, 5e33)
     return samples
