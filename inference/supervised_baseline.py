@@ -20,8 +20,12 @@ class MLP(nn.Module):
 
 def train_inverse_regressor(X, TH, epochs=200, lr=1e-3, bs=128, device=None, verbose=True):
     device = device or ("cuda" if t.cuda.is_available() else "cpu")
-    X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0, posinf=1e5, neginf=-1e5)
-    TH = np.nan_to_num(np.asarray(TH, dtype=np.float32), nan=0.0, posinf=1e5, neginf=-1e5)
+    X = np.asarray(X, dtype=np.float64)
+    TH = np.asarray(TH, dtype=np.float64)
+    if X.ndim != 2 or TH.ndim != 2 or X.shape[0] != TH.shape[0] or not X.shape[0]:
+        raise ValueError("X and TH must be non-empty 2-D arrays with matching rows")
+    if not np.all(np.isfinite(X)) or not np.all(np.isfinite(TH)):
+        raise ValueError("Training arrays must contain only finite values")
     x_mean = X.mean(axis=0)
     x_std = X.std(axis=0)
     x_std[x_std < 1e-8] = 1.0
@@ -66,9 +70,10 @@ def predict_inverse(model, x_obs, device=None):
         tx = T.tensor(xn, dtype=T.float32).to(device)
         out = model(tx).cpu().numpy()
     out = out * model.th_std + model.th_mean
-    out[:, 0] = np.clip(out[:, 0], 5e13, 2e14)
-    out[:, 1] = np.clip(out[:, 1], 3e14, 1e15)
-    out[:, 1] = np.maximum(out[:, 1], out[:, 0] * 1.5)
-    out[:, 2:5] = np.clip(out[:, 2:5], 1.2, 3.5)
-    out[:, 5] = np.clip(out[:, 5], 1e33, 1e36)
+    out[:, 0] = np.clip(out[:, 0], 1.2e14, 1.8e14)
+    out[:, 1] = np.clip(out[:, 1], 4.5e14, 6e14)
+    out[:, 2] = np.clip(out[:, 2], 1.3, 1.6)
+    out[:, 3] = np.clip(out[:, 3], 1.8, 2.4)
+    out[:, 4] = np.clip(out[:, 4], 2.8, 3.1)
+    out[:, 5] = np.clip(out[:, 5], 2e33, 5e33)
     return out

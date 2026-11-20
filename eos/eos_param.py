@@ -1,84 +1,113 @@
 import numpy as np
+
 from .units import C
 
+
 class PiecewisePolytrope:
+    """Three-segment cold polytrope in CGS units.
+
+    Pressure is ``K_i * rho**Gamma_i``. ``rho`` is rest-mass density in
+    g/cm^3, pressure is dyn/cm^2, and energy density is erg/cm^3.
+    Integration constants make the energy density continuous at both breaks.
     """
-    3-segment piecewise polytrope: P = K_i * rho^{Gamma_i} with breaks rho1<rho2.
-    Continuity in P enforced at rho1 and rho2.
-    Parameters: rho1, rho2 [g/cc], Gamma1..3, P1=P(rho1) [dyne/cm^2].
-    """
+
     def __init__(self, rho1, rho2, Gamma1, Gamma2, Gamma3, P1):
-        assert rho1 < rho2
+        parameters = np.asarray(
+            [rho1, rho2, Gamma1, Gamma2, Gamma3, P1], dtype=float
+        )
+        if not np.all(np.isfinite(parameters)):
+            raise ValueError("All EoS parameters must be finite")
+        if rho1 <= 0 or rho2 <= rho1:
+            raise ValueError("Density breaks must satisfy 0 < rho1 < rho2")
+        if min(Gamma1, Gamma2, Gamma3) <= 1.0:
+            raise ValueError("All adiabatic indices must be greater than 1")
+        if P1 <= 0:
+            raise ValueError("P1 must be positive")
+
         self.rho1, self.rho2 = float(rho1), float(rho2)
-        self.Gamma1, self.Gamma2, self.Gamma3 = map(float, (Gamma1, Gamma2, Gamma3))
+        self.Gamma1, self.Gamma2, self.Gamma3 = map(
+            float, (Gamma1, Gamma2, Gamma3)
+        )
         self.P1 = float(P1)
-        # K1 from P1; then P2 continuity; then K2, K3
-        self.K1 = self.P1 / (self.rho1 ** self.Gamma1)
-        P2 = self.K1 * (self.rho2 ** self.Gamma1)
-        self.K2 = P2 / (self.rho2 ** self.Gamma2)
-        self.K3 = self.K2 * (self.rho2 ** (self.Gamma2 - self.Gamma3))
+        self.K1 = self.P1 / self.rho1**self.Gamma1
+        self.K2 = self.K1 * self.rho1 ** (self.Gamma1 - self.Gamma2)
+        pressure2 = self.K2 * self.rho2**self.Gamma2
+        self.K3 = pressure2 / self.rho2**self.Gamma3
+
+        self._segments = (
+            (self.rho1, self.K1, self.Gamma1),
+            (self.rho2, self.K2, self.Gamma2),
+            (np.inf, self.K3, self.Gamma3),
+        )
+        self._energy_offsets = self._compute_energy_offsets()
+
+    def _compute_energy_offsets(self):
+        offsets = [0.0]
+        for i, density_break in enumerate((self.rho1, self.rho2)):
+            _, K_prev, gamma_prev = self._segments[i]
+            _, K_next, gamma_next = self._segments[i + 1]
+            pressure = K_prev * density_break**gamma_prev
+            energy_prev = (
+                density_break * (C**2 + offsets[i])
+                + pressure / (gamma_prev - 1.0)
+            )
+            offsets.append(
+                (energy_prev - density_break * C**2
+                 - pressure / (gamma_next - 1.0)) / density_break
+            )
+        return tuple(offsets)
+
+    def _segment_values(self, rho):
+        rho = np.asarray(rho, dtype=float)
+        limits = np.array([self.rho1, self.rho2])
+        indices = np.searchsorted(limits, rho, side="right")
+        Ks = np.array([self.K1, self.K2, self.K3])[indices]
+        gammas = np.array([self.Gamma1, self.Gamma2, self.Gamma3])[indices]
+        offsets = np.asarray(self._energy_offsets)[indices]
+        return rho, Ks, gammas, offsets
 
     def pressure(self, rho):
-        rho = np.asarray(rho)
-        P = np.zeros_like(rho, dtype=float)
-        i1 = rho < self.rho1
-        i2 = (rho >= self.rho1) & (rho < self.rho2)
-        i3 = rho >= self.rho2
-        P[i1] = self.K1 * rho[i1] ** self.Gamma1
-        P[i2] = self.K2 * rho[i2] ** self.Gamma2
-        P[i3] = self.K3 * rho[i3] ** self.Gamma3
-        return P if P.shape else P.item()
+        rho, Ks, gammas, _ = self._segment_values(rho)
+        if np.any(~np.isfinite(rho)) or np.any(rho < 0):
+            raise ValueError("Density must be finite and non-negative")
+        pressure = Ks * np.power(rho, gammas)
+        return float(pressure) if pressure.ndim == 0 else pressure
 
-   
-    
     def energy_density(self, rho):
-        """
-        Cold barotrope: epsilon(rho) ≈ rho c^2 + P/(Gamma-1). Piecewise.
-        """
-        rho = np.asarray(rho)
-        eps = np.zeros_like(rho, dtype=float)
-
-        def seg_eps(r, K, Gm):
-            P = K * r ** Gm
-            u = P / (Gm - 1.0)
-            return r * C**2 + u
-            
-
-        i1 = rho < self.rho1
-        i2 = (rho >= self.rho1) & (rho < self.rho2)
-        i3 = rho >= self.rho2
-        if np.any(i1):
-            eps[i1] = seg_eps(rho[i1], self.K1, self.Gamma1)
-        if np.any(i2):
-            eps[i2] = seg_eps(rho[i2], self.K2, self.Gamma2)
-        if np.any(i3):
-            eps[i3] = seg_eps(rho[i3], self.K3, self.Gamma3)
-        return eps if eps.shape else eps.item()
+        """Return total energy density, including rest-mass energy [erg/cm^3]."""
+        rho, Ks, gammas, offsets = self._segment_values(rho)
+        if np.any(~np.isfinite(rho)) or np.any(rho < 0):
+            raise ValueError("Density must be finite and non-negative")
+        pressure = Ks * np.power(rho, gammas)
+        energy = rho * (C**2 + offsets) + pressure / (gammas - 1.0)
+        return float(energy) if energy.ndim == 0 else energy
 
     def cs2(self, rho):
-        """c_s^2 = dP/dε. Uses analytic dP/drho and dε/drho per segment."""
-        rho = np.atleast_1d(rho)
-        out = np.empty_like(rho, dtype=float)
-        for k, r in enumerate(rho):
-            if r < self.rho1:
-                K, Gm = self.K1, self.Gamma1
-            elif r < self.rho2:
-                K, Gm = self.K2, self.Gamma2
-            else:
-                K, Gm = self.K3, self.Gamma3
-            dPdrho = K * Gm * r ** (Gm - 1.0)
-            depsdrho = (C * C) + (Gm / (Gm - 1.0)) * K * r ** (Gm - 1.0)
-            out[k] = dPdrho / depsdrho
-        return out if out.shape[0] > 1 else out.item()
+        """Return ``dP/dε`` (sound speed squared divided by ``c**2``)."""
+        rho, Ks, gammas, offsets = self._segment_values(rho)
+        if np.any(~np.isfinite(rho)) or np.any(rho <= 0):
+            raise ValueError("Density must be finite and positive")
+        dp_drho = Ks * gammas * np.power(rho, gammas - 1.0)
+        de_drho = (
+            C**2 + offsets
+            + gammas / (gammas - 1.0) * Ks * np.power(rho, gammas - 1.0)
+        )
+        result = dp_drho / de_drho
+        return float(result) if result.ndim == 0 else result
 
-    # invert P(rho) per segment (monotone)
-    def rho_from_pressure(self, P):
-        P = float(P)
-        P_rho1 = self.K1 * (self.rho1 ** self.Gamma1)
-        P_rho2 = self.K2 * (self.rho2 ** self.Gamma2)
-        if P < P_rho1:
-            return (P / self.K1) ** (1.0 / self.Gamma1)
-        elif P < P_rho2:
-            return (P / self.K2) ** (1.0 / self.Gamma2)
+    def rho_from_pressure(self, pressure):
+        """Invert the monotone pressure relation for a non-negative pressure."""
+        pressure = float(pressure)
+        if not np.isfinite(pressure) or pressure < 0:
+            raise ValueError("Pressure must be finite and non-negative")
+        if pressure == 0:
+            return 0.0
+        p1 = self.pressure(self.rho1)
+        p2 = self.pressure(self.rho2)
+        if pressure < p1:
+            K, gamma = self.K1, self.Gamma1
+        elif pressure < p2:
+            K, gamma = self.K2, self.Gamma2
         else:
-            return (P / self.K3) ** (1.0 / self.Gamma3)
+            K, gamma = self.K3, self.Gamma3
+        return (pressure / K) ** (1.0 / gamma)

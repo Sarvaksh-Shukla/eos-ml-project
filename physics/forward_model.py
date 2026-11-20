@@ -8,7 +8,6 @@ class ForwardModel:
     def observables(self, rho_c_grid):
         out = []
         for rho_c in rho_c_grid:
-            M, R = self.tov.integrate_star(rho_c)
-            _, _, Lam = self.tov.tidal_deformability(rho_c)
+            M, R, Lam = self.tov.tidal_deformability(rho_c)
             out.append({"rho_c": rho_c, "M": M, "R": R, "Lambda": Lam})
         return out

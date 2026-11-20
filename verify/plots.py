@@ -15,7 +15,8 @@ def plot_mr_curve(forward_model, rho_cs, ax=None, label=None):
     return ax
 
 def plot_lambda_vs_mass(forward_model, rho_cs=None, ax=None):
-    rho_cs = rho_cs or np.geomspace(6e13, 3e15, 40)
+    if rho_cs is None:
+        rho_cs = np.geomspace(6e13, 3e15, 40)
     Ms, Ls = [], []
     for rc in rho_cs:
         M, R, Lam = forward_model.tov.tidal_deformability(rc)
